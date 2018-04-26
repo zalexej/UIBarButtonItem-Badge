@@ -29,6 +29,8 @@ NSString const *UIBarButtonItem_badgeValueKey = @"UIBarButtonItem_badgeValueKey"
 
 - (void)badgeInit
 {
+	UILabel* badge = objc_getAssociatedObject(self, &UIBarButtonItem_badgeKey);
+	
     UIView *superview = nil;
     CGFloat defaultOriginX = 0;
     if (self.customView) {
@@ -38,9 +40,9 @@ NSString const *UIBarButtonItem_badgeValueKey = @"UIBarButtonItem_badgeValueKey"
         superview.clipsToBounds = NO;
     } else if ([self respondsToSelector:@selector(view)] && [(id)self view]) {
         superview = [(id)self view];
-        defaultOriginX = superview.frame.size.width - self.badge.frame.size.width;
+        defaultOriginX = superview.frame.size.width - badge.frame.size.width;
     }
-    [superview addSubview:self.badge];
+    [superview addSubview:badge];
     
     // Default design initialization
     self.badgeBGColor   = [UIColor redColor];
@@ -155,11 +157,14 @@ NSString const *UIBarButtonItem_badgeValueKey = @"UIBarButtonItem_badgeValueKey"
 #pragma mark - getters/setters
 -(UILabel*) badge {
     UILabel* lbl = objc_getAssociatedObject(self, &UIBarButtonItem_badgeKey);
+	if (lbl != nil && lbl.window == nil) {
+		[lbl removeFromSuperview];
+		lbl = nil;
+	}
     if(lbl==nil) {
         lbl = [[UILabel alloc] initWithFrame:CGRectMake(self.badgeOriginX, self.badgeOriginY, 20, 20)];
         [self setBadge:lbl];
         [self badgeInit];
-        [self.customView addSubview:lbl];
         lbl.textAlignment = NSTextAlignmentCenter;
     }
     return lbl;
