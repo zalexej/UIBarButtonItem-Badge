@@ -9,7 +9,7 @@ Pod::Spec.new do |s|
 
   s.author       = { "Mike" => "http://mikethinkingoutloud.com" }
 
-  s.source       = { :git => "https://github.com/mikeMTOL/UIBarButtonItem-Badge.git" }
+  s.source       = { :git => "https://github.com/zalexej/UIBarButtonItem-Badge.git" }
 
   s.platform     = :ios, '6.0'
 
