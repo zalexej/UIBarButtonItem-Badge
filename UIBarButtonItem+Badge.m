@@ -1,15 +1,17 @@
 //
 //  UIBarButtonItem+Badge.m
-//  therichest
+//  RoboForm
 //
-//  Created by Mike on 2014-05-05.
-//  Copyright (c) 2014 Valnet Inc. All rights reserved.
+//  Created by Alexey Zarva on 27.04.18.
+//  Copyright (c) 2018 Siber Systems, Inc. All rights reserved.
 //
 #import <objc/runtime.h>
 #import "UIBarButtonItem+Badge.h"
 
 NSString const *UIBarButtonItem_badgeKey = @"UIBarButtonItem_badgeKey";
-
+NSString const *UIBarButtonItem_badgeContainerKey = @"UIBarButtonItem_badgeContainerKey";
+NSString const *UIBarButtonItem_badgeSizeConstraintsKey = @"UIBarButtonItem_badgeSizeConstraintsKey";
+NSString const *UIBarButtonItem_badgeOffsetConstraintsKey = @"UIBarButtonItem_badgeOffsetConstraintsKey";
 NSString const *UIBarButtonItem_badgeBGColorKey = @"UIBarButtonItem_badgeBGColorKey";
 NSString const *UIBarButtonItem_badgeTextColorKey = @"UIBarButtonItem_badgeTextColorKey";
 NSString const *UIBarButtonItem_badgeFontKey = @"UIBarButtonItem_badgeFontKey";
@@ -25,40 +27,29 @@ NSString const *UIBarButtonItem_badgeValueKey = @"UIBarButtonItem_badgeValueKey"
 @implementation UIBarButtonItem (Badge)
 
 @dynamic badgeValue, badgeBGColor, badgeTextColor, badgeFont;
-@dynamic badgePadding, badgeMinSize, badgeOriginX, badgeOriginY;
+@dynamic badgePadding, badgeMinSize, badgeOffsetX, badgeOffsetY;
 @dynamic shouldHideBadgeAtZero, shouldAnimateBadge;
 
 
 - (void)badgeInit
 {
-	UILabel* badge = self.badge;
-    UIView *superview = nil;
-    CGFloat defaultOriginX = 0;
-    if (self.customView) {
-        superview = self.customView;
-        defaultOriginX = superview.frame.size.width - badge.frame.size.width/2;
-        // Avoids badge to be clipped when animating its scale
-        superview.clipsToBounds = NO;
-    } else if ([self respondsToSelector:@selector(view)] && [(id)self view]) {
-        superview = [(id)self view];
-        defaultOriginX = superview.frame.size.width - badge.frame.size.width;
-    }
-	
     // Default design initialization
     self.badgeBGColor   = [UIColor redColor];
     self.badgeTextColor = [UIColor whiteColor];
     self.badgeFont      = [UIFont systemFontOfSize:12.0];
     self.badgePadding   = 6;
     self.badgeMinSize   = 8;
-    self.badgeOriginX   = defaultOriginX;
-    self.badgeOriginY   = -4;
+	self.badgeOffsetX   = 0;
+    self.badgeOffsetY   = 0;
     self.shouldHideBadgeAtZero = YES;
     self.shouldAnimateBadge = YES;
+	
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(didRotate:) name:UIDeviceOrientationDidChangeNotification object:nil];
 }
 
 - (void)addBadgeToSuperView {
-	UILabel* badge = self.badge;
-	if (badge.superview != nil) {
+	UIView *labelContainer = [self labelContainer];
+	if (labelContainer.superview != nil) {
 		return;
 	}
 	UIView *superview = nil;
@@ -68,8 +59,34 @@ NSString const *UIBarButtonItem_badgeValueKey = @"UIBarButtonItem_badgeValueKey"
 	} else if ([self respondsToSelector:@selector(view)] && [(id)self view]) {
 		superview = [(id)self view];
 	}
-	[superview addSubview:badge];
+	[superview addSubview:labelContainer];
+	
+	NSLayoutConstraint *offsetYConstraint = [NSLayoutConstraint constraintWithItem:labelContainer
+																		 attribute:NSLayoutAttributeBottom
+																		 relatedBy:NSLayoutRelationEqual
+																			toItem:superview
+																		 attribute:NSLayoutAttributeCenterY
+																		multiplier:1.0
+																		  constant:-self.badgeOffsetY];
+	NSLayoutConstraint *offsetXConstraint = [NSLayoutConstraint constraintWithItem:labelContainer
+																		 attribute:NSLayoutAttributeLeft
+																		 relatedBy:NSLayoutRelationEqual
+																			toItem:superview
+																		 attribute:NSLayoutAttributeCenterX
+																		multiplier:1.0
+																		  constant:self.badgeOffsetX];
+	[superview removeConstraints:[self badgeOffsetConstraints]];
+	[self setBadgeOffsetConstraints:@[offsetXConstraint, offsetYConstraint]];
+	[superview addConstraints:[self badgeOffsetConstraints]];
 	[self refreshBadge];
+}
+
+- (void)didRotate:(NSNotification *)notification {
+	dispatch_async(dispatch_get_main_queue(), ^{
+		[self refreshBadge];
+		UIView *labelContainer = [self labelContainer];
+		[labelContainer.superview bringSubviewToFront:labelContainer];
+	});
 }
 
 #pragma mark - Utility methods
@@ -78,13 +95,15 @@ NSString const *UIBarButtonItem_badgeValueKey = @"UIBarButtonItem_badgeValueKey"
 - (void)refreshBadge {
     // Change new attributes
     self.badge.textColor        = self.badgeTextColor;
-    self.badge.backgroundColor  = self.badgeBGColor;
+	self.badge.backgroundColor  = [UIColor clearColor];
     self.badge.font             = self.badgeFont;
+	
+	[self labelContainer].backgroundColor = self.badgeBGColor;
     
     if (!self.badgeValue || [self.badgeValue isEqualToString:@""] || ([self.badgeValue isEqualToString:@"0"] && self.shouldHideBadgeAtZero)) {
-        self.badge.hidden = YES;
+        [self labelContainer].hidden = YES;
     } else {
-        self.badge.hidden = NO;
+        [self labelContainer].hidden = NO;
         [self updateBadgeValueAnimated:YES];
     }
 }
@@ -94,10 +113,14 @@ NSString const *UIBarButtonItem_badgeValueKey = @"UIBarButtonItem_badgeValueKey"
     // Calculate expected size to fit new value
     // Use an intermediate label to get expected size thanks to sizeToFit
     // We don't call sizeToFit on the true label to avoid bad display
-    UILabel *frameLabel = [self duplicateLabel:self.badge];
-    [frameLabel sizeToFit];
+	
+	UILabel *duplicateLabel = [[UILabel alloc] initWithFrame:self.badge.frame];
+	duplicateLabel.text = self.badge.text;
+	duplicateLabel.font = self.badge.font;
+	
+    [duplicateLabel sizeToFit];
     
-    CGSize expectedLabelSize = frameLabel.frame.size;
+    CGSize expectedLabelSize = duplicateLabel.frame.size;
     return expectedLabelSize;
 }
 
@@ -112,11 +135,30 @@ NSString const *UIBarButtonItem_badgeValueKey = @"UIBarButtonItem_badgeValueKey"
     CGFloat minWidth = expectedLabelSize.width;
     CGFloat padding = self.badgePadding;
     
-    // Using const we make sure the badge doesn't get too smal
+    // Using const we make sure the badge doesn't get too small
     minWidth = (minWidth < minHeight) ? minHeight : expectedLabelSize.width;
-    self.badge.layer.masksToBounds = YES;
-    self.badge.frame = CGRectMake(self.badgeOriginX, self.badgeOriginY, minWidth + padding, minHeight + padding);
-    self.badge.layer.cornerRadius = (minHeight + padding) / 2;
+	
+	CGRect badgeFrame = self.badge.frame;
+	badgeFrame.size = CGSizeMake(minWidth + padding, minHeight + padding);
+	
+	UIView *labelContainer = [self labelContainer];
+	if (!CGSizeEqualToSize(labelContainer.frame.size, badgeFrame.size)) {
+		NSArray *sizeConstraints = [self badgeSizeConstraints];
+		NSLayoutConstraint *widthConstraint = sizeConstraints[0];
+		NSLayoutConstraint *heightConstraint = sizeConstraints[1];
+		widthConstraint.constant = badgeFrame.size.width;
+		heightConstraint.constant = badgeFrame.size.height;
+	}
+	labelContainer.layer.masksToBounds = YES;
+    labelContainer.layer.cornerRadius = (minHeight + padding) / 2;
+	
+	NSArray *offsetConstraints = [self badgeOffsetConstraints];
+	NSLayoutConstraint *offsetXConstraint = offsetConstraints[0];
+	NSLayoutConstraint *offsetYConstraint = offsetConstraints[1];
+	offsetXConstraint.constant = self.badgeOffsetX;
+	offsetYConstraint.constant = self.badgeOffsetY;
+	
+	[self.badge.superview layoutIfNeeded];
 }
 
 // Handle the badge changing value
@@ -144,46 +186,105 @@ NSString const *UIBarButtonItem_badgeValueKey = @"UIBarButtonItem_badgeValueKey"
     }
 }
 
-- (UILabel *)duplicateLabel:(UILabel *)labelToCopy {
-    UILabel *duplicateLabel = [[UILabel alloc] initWithFrame:labelToCopy.frame];
-    duplicateLabel.text = labelToCopy.text;
-    duplicateLabel.font = labelToCopy.font;
-    
-    return duplicateLabel;
-}
-
 - (void)removeBadge {
     // Animate badge removal
     [UIView animateWithDuration:0.2 animations:^{
         self.badge.transform = CGAffineTransformMakeScale(0, 0);
     } completion:^(BOOL finished) {
+		[[self labelContainer] removeFromSuperview];
+		[self setLabelContainer:nil];
         [self.badge removeFromSuperview];
         self.badge = nil;
     }];
 }
 
 - (void)updateBadge {
-	UILabel *lbl = self.badge;
-	if (lbl.window == nil) {
-		[lbl removeFromSuperview];
+	UIView *labelContainer = [self labelContainer];
+	if (labelContainer.window == nil) {
+		[labelContainer removeFromSuperview];
 	}
 	[self addBadgeToSuperView];
 }
 
 #pragma mark - getters/setters
 - (UILabel*)badge {
-	UILabel* lbl = objc_getAssociatedObject(self, &UIBarButtonItem_badgeKey);
-	if (lbl==nil) {
-		lbl = [[UILabel alloc] initWithFrame:CGRectMake(self.badgeOriginX, self.badgeOriginY, 20, 20)];
-		[self setBadge:lbl];
+	UILabel* label = objc_getAssociatedObject(self, &UIBarButtonItem_badgeKey);
+	if (label == nil) {
+		label = [[UILabel alloc] initWithFrame:CGRectZero];
+		label.textAlignment = NSTextAlignmentCenter;
+		[label sizeToFit];
+		label.translatesAutoresizingMaskIntoConstraints = NO;
+		[self setBadge:label];
 		[self badgeInit];
-		lbl.textAlignment = NSTextAlignmentCenter;
+		
+		UIView *labelContainer = [[UIView alloc] initWithFrame:CGRectZero];
+		labelContainer.translatesAutoresizingMaskIntoConstraints = NO;
+		[labelContainer addSubview:label];
+		[self setLabelContainer:labelContainer];
+
+		[labelContainer addConstraint:[NSLayoutConstraint constraintWithItem:label
+																   attribute:NSLayoutAttributeCenterX
+																   relatedBy:NSLayoutRelationEqual
+																	  toItem:labelContainer
+																   attribute:NSLayoutAttributeCenterX
+																  multiplier:1.0
+																	constant:0]];
+		[labelContainer addConstraint:[NSLayoutConstraint constraintWithItem:label
+																   attribute:NSLayoutAttributeCenterY
+																   relatedBy:NSLayoutRelationEqual
+																	  toItem:labelContainer
+																   attribute:NSLayoutAttributeCenterY
+																  multiplier:1.0
+																	constant:0]];
+		NSLayoutConstraint *constraintWidth = [NSLayoutConstraint constraintWithItem:labelContainer
+																		   attribute:NSLayoutAttributeWidth
+																		   relatedBy:NSLayoutRelationEqual
+																			  toItem:nil
+																		   attribute:NSLayoutAttributeNotAnAttribute
+																		  multiplier:1.0
+																		  	constant:0];
+		NSLayoutConstraint *constraintHeight = [NSLayoutConstraint constraintWithItem:labelContainer
+																			attribute:NSLayoutAttributeHeight
+																			relatedBy:NSLayoutRelationEqual
+																			   toItem:nil
+																			attribute:NSLayoutAttributeNotAnAttribute
+																		   multiplier:1.0
+																			 constant:0];
+		[self setBadgeSizeConstraints:@[constraintWidth, constraintHeight]];
+		[labelContainer addConstraints:[self badgeSizeConstraints]];
 	}
-	return lbl;
+	return label;
 }
 
 - (void)setBadge:(UILabel *)badgeLabel {
     objc_setAssociatedObject(self, &UIBarButtonItem_badgeKey, badgeLabel, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+- (UIView *)labelContainer {
+	UIView *labelContainer = objc_getAssociatedObject(self, &UIBarButtonItem_badgeContainerKey);
+	return labelContainer;
+}
+
+- (void)setLabelContainer:(UIView *)labelContainer {
+	objc_setAssociatedObject(self, &UIBarButtonItem_badgeContainerKey, labelContainer, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+- (NSArray *)badgeSizeConstraints {
+	NSArray *badgeSizeConstraints = objc_getAssociatedObject(self, &UIBarButtonItem_badgeSizeConstraintsKey);
+	return badgeSizeConstraints;
+}
+
+- (void)setBadgeSizeConstraints:(NSArray *)badgeSizeConstraints {
+	objc_setAssociatedObject(self, &UIBarButtonItem_badgeSizeConstraintsKey, badgeSizeConstraints, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
+- (NSArray *)badgeOffsetConstraints {
+	NSArray *badgeOffsetConstraints = objc_getAssociatedObject(self, &UIBarButtonItem_badgeOffsetConstraintsKey);
+	return badgeOffsetConstraints;
+}
+
+- (void)setBadgeOffsetConstraints:(NSArray *)badgeOffsetConstraints {
+	objc_setAssociatedObject(self, &UIBarButtonItem_badgeOffsetConstraintsKey, badgeOffsetConstraints, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
 // Badge value to be display
@@ -264,26 +365,26 @@ NSString const *UIBarButtonItem_badgeValueKey = @"UIBarButtonItem_badgeValueKey"
 }
 
 // Values for offseting the badge over the BarButtonItem you picked
-- (CGFloat)badgeOriginX {
+- (CGFloat)badgeOffsetX {
     NSNumber *number = objc_getAssociatedObject(self, &UIBarButtonItem_badgeOriginXKey);
     return number.floatValue;
 }
 
-- (void)setBadgeOriginX:(CGFloat)badgeOriginX {
-    NSNumber *number = [NSNumber numberWithDouble:badgeOriginX];
+- (void)setBadgeOffsetX:(CGFloat)badgeOffsetX {
+    NSNumber *number = [NSNumber numberWithDouble:badgeOffsetX];
     objc_setAssociatedObject(self, &UIBarButtonItem_badgeOriginXKey, number, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (self.badge) {
         [self updateBadgeFrame];
     }
 }
 
-- (CGFloat)badgeOriginY {
+- (CGFloat)badgeOffsetY {
     NSNumber *number = objc_getAssociatedObject(self, &UIBarButtonItem_badgeOriginYKey);
     return number.floatValue;
 }
 
-- (void)setBadgeOriginY:(CGFloat)badgeOriginY {
-    NSNumber *number = [NSNumber numberWithDouble:badgeOriginY];
+- (void)setBadgeOffsetY:(CGFloat)badgeOffsetY {
+    NSNumber *number = [NSNumber numberWithDouble:badgeOffsetY];
     objc_setAssociatedObject(self, &UIBarButtonItem_badgeOriginYKey, number, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (self.badge) {
         [self updateBadgeFrame];
